@@ -205,3 +205,24 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# =============================================================================
+# Project Specific
+# =============================================================================
+.env
+.env.local
+.env.*.local
+venv/
+.venv/
+.idea/
+.vscode/
+*.swp
+*.swo
+logs/
+*.log
+*.db
+*.sqlite3
+htmlcov/
+.coverage
+coverage.xml
+.DS_Store

@@ -1,0 +1,138 @@
+# =============================================================================
+# Sentiment Intelligence Platform - Docker Compose
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: sentiment-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sentiment_intel
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Database Migration (runs once)
+  # ---------------------------------------------------------------------------
+  migrate:
+    build: .
+    container_name: sentiment-migrate
+    ### CHANGED: use venv python so dependencies are available
+    command: /opt/venv/bin/python -c "from app.extensions import init_db; init_db(); print('Database initialized successfully!')"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/sentiment_intel
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # API Server
+  # ---------------------------------------------------------------------------
+  api:
+    build: .
+    container_name: sentiment-api
+    command: gunicorn --bind 0.0.0.0:8000 --workers 4 --timeout 120 "app:create_app()"
+    ports:
+      - "8000:8000"
+    environment:
+      FLASK_ENV: production
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/sentiment_intel
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ### CHANGED: align with your real route (you successfully curled /health)
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Background Workers
+  # ---------------------------------------------------------------------------
+  worker-1:
+    build: .
+    container_name: sentiment-worker-1
+    ### CHANGED: force using venv python (ensures requests/textblob/openai exist)
+    command: /opt/venv/bin/python -c "from app.worker import run_worker; run_worker('worker-1')"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/sentiment_intel
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      WORKER_ID: worker-1
+      WORKER_POLL_INTERVAL: 5
+      WORKER_MAX_RETRIES: 3
+      WORKER_LOCK_TIMEOUT: 600
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      ALERT_NEGATIVE_RATIO_THRESHOLD: 0.3
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ### CHANGED: stable healthcheck (no fragile ps/grep/escaping)
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/venv/bin/python -c \"import app.worker\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  worker-2:
+    build: .
+    container_name: sentiment-worker-2
+    ### CHANGED
+    command: /opt/venv/bin/python -c "from app.worker import run_worker; run_worker('worker-2')"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/sentiment_intel
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      WORKER_ID: worker-2
+      WORKER_POLL_INTERVAL: 5
+      WORKER_MAX_RETRIES: 3
+      WORKER_LOCK_TIMEOUT: 600
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      ALERT_NEGATIVE_RATIO_THRESHOLD: 0.3
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ### CHANGED
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/venv/bin/python -c \"import app.worker\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
